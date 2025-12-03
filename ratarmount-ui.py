@@ -882,7 +882,7 @@ if Nautilus is not None:
 
             item_mount_ui = Nautilus.MenuItem(
                 name="RatarmountExtension::MountUI",
-                label="Mount Advanced...",
+                label="Mount Advanced",
                 tip="Open Ratarmount UI with selected archives",
             )
             item_mount_ui.connect("activate", self.on_mount_ui, valid_files)
