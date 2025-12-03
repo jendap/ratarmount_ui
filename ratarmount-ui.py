@@ -4,12 +4,13 @@ from __future__ import annotations
 import sys
 import os
 import shlex
+import signal
 import subprocess
 from typing import Callable
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk, Gio, Gdk, Pango, GObject  # noqa: E402
+from gi.repository import Gtk, Gio, Gdk, Pango, GObject, GLib  # noqa: E402
 
 try:
     gi.require_version("Nautilus", "4.1")
@@ -121,6 +122,7 @@ class RatarmountWindow(Gtk.ApplicationWindow):
         self.updating_preview = False
         self.updating_ui = False
         self.dragged_row: SourceRow | None = None
+        self.subprocess: subprocess.Popen | None = None
 
         # Header Bar
         header = Gtk.HeaderBar()
@@ -144,12 +146,18 @@ class RatarmountWindow(Gtk.ApplicationWindow):
         action_about.connect("activate", self.on_about)
         self.add_action(action_about)
 
-        # Main Layout
-        vbox = self._create_main_vbox(self)
+        # Main Stack
+        self.stack = Gtk.Stack()
+        self.stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
+        self.set_child(self.stack)
+
+        # --- Config Page ---
+        vbox_config = self._create_main_vbox()
+        self.stack.add_named(vbox_config, "config")
 
         # Mount Sources
         hbox_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        vbox.append(hbox_header)
+        vbox_config.append(hbox_header)
 
         hbox_header.append(Gtk.Label(label="Mount Sources:", xalign=0))
 
@@ -170,11 +178,11 @@ class RatarmountWindow(Gtk.ApplicationWindow):
         scrolled_list.set_child(self.listbox)
         scrolled_list.set_min_content_height(200)
         scrolled_list.set_vexpand(True)
-        vbox.append(scrolled_list)
+        vbox_config.append(scrolled_list)
 
         # Mount Point
         hbox_mount = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10, margin_start=16, margin_end=16)
-        vbox.append(hbox_mount)
+        vbox_config.append(hbox_mount)
 
         hbox_mount.append(Gtk.Label(label="Mount Point:", xalign=0, width_chars=16))
 
@@ -188,11 +196,11 @@ class RatarmountWindow(Gtk.ApplicationWindow):
         btn_browse_mount.connect("clicked", self.on_browse_mount)
         hbox_mount.append(btn_browse_mount)
 
-        vbox.append(Gtk.Separator())
+        vbox_config.append(Gtk.Separator())
 
         # Expander for Advanced Options
         expander = Gtk.Expander(label="Advanced")
-        vbox.append(expander)
+        vbox_config.append(expander)
 
         vbox_advanced = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin_start=16, margin_end=16)
         expander.set_child(vbox_advanced)
@@ -292,7 +300,7 @@ class RatarmountWindow(Gtk.ApplicationWindow):
         # Action Buttons
         hbox_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         hbox_actions.set_halign(Gtk.Align.END)
-        vbox.append(hbox_actions)
+        vbox_config.append(hbox_actions)
 
         btn_cancel = Gtk.Button(label="Cancel")
         btn_cancel.connect("clicked", lambda *args: self.on_cancel())
@@ -302,6 +310,34 @@ class RatarmountWindow(Gtk.ApplicationWindow):
         btn_mount.add_css_class("suggested-action")
         btn_mount.connect("clicked", lambda *args: self.on_mount())
         hbox_actions.append(btn_mount)
+
+        # --- Execution Page ---
+        vbox_exec = self._create_main_vbox()
+        self.stack.add_named(vbox_exec, "execution")
+
+        self.log_view = Gtk.TextView()
+        self.log_view.set_editable(False)
+        self.log_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        self.log_view.add_css_class("monospace")
+
+        scrolled_log = Gtk.ScrolledWindow()
+        scrolled_log.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scrolled_log.set_child(self.log_view)
+        scrolled_log.set_vexpand(True)
+        vbox_exec.append(scrolled_log)
+
+        hbox_exec_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        hbox_exec_actions.set_halign(Gtk.Align.END)
+        vbox_exec.append(hbox_exec_actions)
+
+        btn_abort = Gtk.Button(label="Abort")
+        btn_abort.add_css_class("destructive-action")
+        btn_abort.connect("clicked", self.on_abort)
+        hbox_exec_actions.append(btn_abort)
+
+        btn_close = Gtk.Button(label="Close")
+        btn_close.connect("clicked", self.on_close_clicked)
+        hbox_exec_actions.append(btn_close)
 
         # Shortcuts
         shortcuts = Gtk.ShortcutController()
@@ -321,13 +357,12 @@ class RatarmountWindow(Gtk.ApplicationWindow):
 
         self.update_ui_from_args(initial_args if initial_args is not None else [])
 
-    def _create_main_vbox(self, window: Gtk.Window) -> Gtk.Box:
+    def _create_main_vbox(self) -> Gtk.Box:
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         vbox.set_margin_top(20)
         vbox.set_margin_bottom(20)
         vbox.set_margin_start(20)
         vbox.set_margin_end(20)
-        window.set_child(vbox)
         return vbox
 
     def on_recursive_toggled(self, widget: Gtk.Widget) -> None:
@@ -391,7 +426,8 @@ class RatarmountWindow(Gtk.ApplicationWindow):
         help_window.set_modal(True)
         help_window.set_default_size(640, 480)
 
-        vbox = self._create_main_vbox(help_window)
+        vbox = self._create_main_vbox()
+        help_window.set_child(vbox)
         vbox.append(self._create_cmd_output("ratarmount --help", ["ratarmount", "--help"]))
 
         help_window.present()
@@ -402,7 +438,8 @@ class RatarmountWindow(Gtk.ApplicationWindow):
         about_window.set_modal(True)
         about_window.set_default_size(640, 480)
 
-        vbox = self._create_main_vbox(about_window)
+        vbox = self._create_main_vbox()
+        about_window.set_child(vbox)
         vbox.append(self._author_widget("Ratarmount", "Maximillian Knespel", "https://github.com/mxmlnkn/ratarmount"))
         vbox.append(self._author_widget("Ratarmount UI", "Jan Prach", "https://github.com/jendap/ratarmount-ui"))
         vbox.append(self._create_cmd_output("Open Source Attributions:", ["ratarmount", "--oss-attributions-short"]))
@@ -693,14 +730,67 @@ class RatarmountWindow(Gtk.ApplicationWindow):
         if not cmd:
             return
 
-        # Execute in terminal? Or just run it?
-        # For now, let's just run it and show output in a dialog or print to stdout
+        # Switch to execution view
+        self.stack.set_visible_child_name("execution")
+        self.log_view.get_buffer().set_text("")
+
         print(f"Executing: {cmd}")
         try:
-            subprocess.Popen(cmd)
-            self.close()
+            self.subprocess = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,  # Line buffered
+            )
+
+            if self.subprocess.stdout:
+                GLib.io_add_watch(
+                    self.subprocess.stdout,
+                    GLib.IO_IN | GLib.IO_HUP,
+                    self.on_subprocess_output,
+                )
+
         except Exception as e:
-            print(f"Error: {e}")
+            self.log_view.get_buffer().set_text(f"Error starting command: {e}")
+
+    def on_subprocess_output(self, source, condition) -> bool:
+        if condition & GLib.IO_IN:
+            line = source.readline()
+            if line:
+                self._append_log(line)
+                return True
+
+        # If we get here, it means IO_HUP or readline returned empty (EOF)
+        # The process has likely exited or closed stdout.
+        # We should wait for the process to fully exit to get the return code,
+        # but for now, let's just close the app as requested.
+        # We use a small timeout to ensure we processed all output and let the process die.
+        GLib.timeout_add(100, self.check_exit_and_close)
+        return False
+
+    def check_exit_and_close(self) -> bool:
+        if self.subprocess:
+            if self.subprocess.poll() is not None:
+                self.close()
+                return False
+        return True  # Keep checking
+
+    def _append_log(self, text: str) -> None:
+        buffer = self.log_view.get_buffer()
+        iter_end = buffer.get_end_iter()
+        buffer.insert(iter_end, text)
+        # Scroll to end
+        adj = self.log_view.get_parent().get_vadjustment()
+        if adj:
+            adj.set_value(adj.get_upper() - adj.get_page_size())
+
+    def on_abort(self, btn: Gtk.Button) -> None:
+        if self.subprocess:
+            self.subprocess.send_signal(signal.SIGINT)
+
+    def on_close_clicked(self, btn: Gtk.Button) -> None:
+        self.close()
 
     def on_cancel(self) -> None:
         self.close()
