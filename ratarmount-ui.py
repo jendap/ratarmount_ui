@@ -398,19 +398,18 @@ class RatarmountWindow(Gtk.ApplicationWindow):
         return hbox_author
 
     def _create_cmd_output(self, label: str, cmd: list[str]) -> Gtk.Widget:
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        vbox.append(Gtk.Label(label=label, xalign=0))
+
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_vexpand(True)
         scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        scrolled.set_child(vbox)
-
-        vbox.append(Gtk.Label(label=label, xalign=0))
 
         text_view = Gtk.TextView()
         text_view.set_editable(False)
         text_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
         text_view.add_css_class("monospace")
-        vbox.append(text_view)
+        scrolled.set_child(text_view)
 
         try:
             output = subprocess.check_output(cmd, text=True)
@@ -418,7 +417,8 @@ class RatarmountWindow(Gtk.ApplicationWindow):
         except Exception as e:
             text_view.get_buffer().set_text(f"Failed to run {cmd}: {e}")
 
-        return scrolled
+        vbox.append(scrolled)
+        return vbox
 
     def on_help(self, *args) -> None:
         help_window = Gtk.Window(transient_for=self)
@@ -440,8 +440,8 @@ class RatarmountWindow(Gtk.ApplicationWindow):
 
         vbox = self._create_main_vbox()
         about_window.set_child(vbox)
-        vbox.append(self._author_widget("Ratarmount", "Maximillian Knespel", "https://github.com/mxmlnkn/ratarmount"))
-        vbox.append(self._author_widget("Ratarmount UI", "Jan Prach", "https://github.com/jendap/ratarmount-ui"))
+        vbox.append(self._create_author("Ratarmount UI", "Jan Prach", "https://github.com/jendap/ratarmount-ui"))
+        vbox.append(self._create_author("Ratarmount", "Maximillian Knespel", "https://github.com/mxmlnkn/ratarmount"))
         vbox.append(self._create_cmd_output("Open Source Attributions:", ["ratarmount", "--oss-attributions-short"]))
 
         about_window.present()
@@ -858,15 +858,13 @@ if Nautilus is not None:
     )
 
     def is_archive(file: Nautilus.FileInfo) -> bool:
-        with open("/tmp/qqq", "a") as f:
-            f.write(f"'{file.get_mime_type()}',\n")
         name_lower_cased = file.get_name().lower()
         for ext in SUPPORTED_EXTENSIONS:
             if name_lower_cased.endswith(ext):
                 return True
         return False
 
-    class RatarmountExtension(GObject.GObject, Nautilus.MenuProvider):
+    class RatarmountMenuProvider(GObject.GObject, Nautilus.MenuProvider):
         def get_file_items(self, files: list[Nautilus.FileInfo]) -> list[Nautilus.MenuItem]:
             valid_files = [file for file in files if is_archive(file)]
 
@@ -874,14 +872,14 @@ if Nautilus is not None:
                 return []
 
             item_mount = Nautilus.MenuItem(
-                name="RatarmountExtension::Mount",
+                name="RatarmountMenuProvider::Mount",
                 label="Mount",
                 tip="Mount selected archives with ratarmount",
             )
             item_mount.connect("activate", self.on_mount, valid_files)
 
             item_mount_ui = Nautilus.MenuItem(
-                name="RatarmountExtension::MountUI",
+                name="RatarmountMenuProvider::MountUI",
                 label="Mount Advanced",
                 tip="Open Ratarmount UI with selected archives",
             )
