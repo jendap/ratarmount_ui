@@ -1,0 +1,20 @@
+[project]
+name = "ratarmount-ui"
+version = "0.1.0"
+description = "Ratarmount UI"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pygobject>=3.54.5",
+    "pygobject-stubs>=2.14.0",
+    "ruff>=0.14.7",
+]
+
+[tool.uv]
+config-settings-package = { pygobject-stubs = { config = "Gtk4,Gdk4" } }
+
+[tool.ruff]
+line-length = 120
