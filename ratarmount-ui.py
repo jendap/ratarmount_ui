@@ -963,7 +963,8 @@ if Nautilus is not None:
             cmd = [sys.executable, script_path] + file_paths
             env = os.environ.copy()
             env.update(extra_env or {})
-            subprocess.Popen(cmd, env=env)
+            cwd = None if len(file_paths) == 0 else os.path.dirname(file_paths[-1])
+            subprocess.Popen(cmd, env=env, cwd=cwd)
 
     class RatarmountInfoProvider(GObject.GObject, Nautilus.InfoProvider):
         def update_file_info(self, file: Nautilus.FileInfo) -> int:
