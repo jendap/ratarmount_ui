@@ -12,12 +12,6 @@ import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk, Gio, Gdk, Pango, GObject, GLib  # noqa: E402
 
-try:
-    gi.require_version("Nautilus", "4.1")
-    from gi.repository import Nautilus  # noqa: E402
-except ImportError:
-    Nautilus = None
-
 
 class SourceRow(Gtk.ListBoxRow):
     def __init__(
@@ -221,8 +215,6 @@ class RatarmountWindow(Gtk.ApplicationWindow):
         auto_run: bool = False,
     ):
         super().__init__(application=app, title="Ratarmount UI")
-        self.set_default_size_from_font()
-
         self.set_default_size_from_font()
 
         self.extra_args: list[str] = []
@@ -731,8 +723,6 @@ class RatarmountWindow(Gtk.ApplicationWindow):
 
         cmd.extend(self.extra_args)
 
-        cmd.extend(self.extra_args)
-
         cmd.extend(self.source_list.get_sources())
 
         mount_point = self.mount_entry.get_text()
@@ -903,86 +893,6 @@ class RatarmountApp(Gtk.Application):
             win.present()
 
         return 0
-
-
-if Nautilus is not None:
-    SUPPORTED_EXTENSIONS = (
-        ".7z",
-        ".7zip",
-        ".a",
-        ".apk",
-        ".appimage",
-        ".ar",
-        ".cab",
-        ".cpio",
-        ".deb",
-        ".iso",
-        ".jar",
-        ".lib",
-        ".rar",
-        ".rpm",
-        ".sqsh",
-        ".squashfs",
-        ".tar.bz2",
-        ".tar.gz",
-        ".tar.xz",
-        ".tar.zst",
-        ".tar",
-        ".tbz2",
-        ".tgz",
-        ".txz",
-        ".tzst",
-        ".xar",
-        ".zip",
-    )
-
-    def is_archive(file: Nautilus.FileInfo) -> bool:
-        name_lower_cased = file.get_name().lower()
-        for ext in SUPPORTED_EXTENSIONS:
-            if name_lower_cased.endswith(ext):
-                return True
-        return False
-
-    class RatarmountMenuProvider(GObject.GObject, Nautilus.MenuProvider):
-        def get_file_items(self, files: list[Nautilus.FileInfo]) -> list[Nautilus.MenuItem]:
-            valid_files = [file for file in files if is_archive(file)]
-
-            if not valid_files:
-                return []
-
-            item_mount = Nautilus.MenuItem(
-                name="RatarmountMenuProvider::Mount",
-                label="Mount",
-                tip="Mount selected archives with ratarmount",
-            )
-            item_mount.connect("activate", self.on_mount, valid_files, {"RATARMOUNT_UI_FORCE": "yes"})
-
-            item_mount_ui = Nautilus.MenuItem(
-                name="RatarmountMenuProvider::MountUI",
-                label="Mount Advanced",
-                tip="Open Ratarmount UI with selected archives",
-            )
-            item_mount_ui.connect("activate", self.on_mount, valid_files)
-
-            return [item_mount, item_mount_ui]
-
-        def on_mount(
-            self, menu: Nautilus.Menu, files: list[Nautilus.FileInfo], extra_env: dict[str, str] | None = None
-        ) -> None:
-            # Spawn this script with files as arguments
-            script_path = os.path.abspath(__file__)
-            file_paths = [file.get_location().get_path() for file in files]
-            cmd = [sys.executable, script_path] + file_paths
-            env = os.environ.copy()
-            env.update(extra_env or {})
-            cwd = None if len(file_paths) == 0 else os.path.dirname(file_paths[-1])
-            subprocess.Popen(cmd, env=env, cwd=cwd)
-
-    class RatarmountInfoProvider(GObject.GObject, Nautilus.InfoProvider):
-        def update_file_info(self, file: Nautilus.FileInfo) -> int:
-            if is_archive(file):
-                file.add_emblem("package")
-            return Nautilus.OperationResult.COMPLETE
 
 
 if __name__ == "__main__":

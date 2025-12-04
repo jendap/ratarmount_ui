@@ -31,8 +31,7 @@ pipx install ratarmount[full]
 wget https://raw.githubusercontent.com/jendap/ratarmount_ui/refs/heads/main/ratarmount-ui.py -O ~/.local/bin/ratarmount-ui
 chmod +x ~/.local/bin/ratarmount-ui
 
-mkdir -p ~/.local/share/nautilus-python/extensions
-ln -s ~/.local/bin/ratarmount-ui ~/.local/share/nautilus-python/extensions/ratarmount-ui
+wget https://raw.githubusercontent.com/jendap/ratarmount_ui/refs/heads/main/ratarmount-ui-nautilus.py -P ~/.local/share/nautilus-python/extensions/
 ```
 
 
@@ -42,7 +41,7 @@ ln -s ~/.local/bin/ratarmount-ui ~/.local/share/nautilus-python/extensions/ratar
 
 Instead of `ratarmount ...` simply use `ratarmount-ui ...`.
 
-### Nautilus extension
+### Gnome Files (Nautilus) extension
 
 Run the commands above. You should now see a "Mount" option in the context menu of archives.
 
