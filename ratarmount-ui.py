@@ -113,7 +113,12 @@ class SourceRow(Gtk.ListBoxRow):
 
 
 class RatarmountWindow(Gtk.ApplicationWindow):
-    def __init__(self, app: "RatarmountApp", initial_args: list[str] | None = None):
+    def __init__(
+        self,
+        app: "RatarmountApp",
+        initial_args: list[str] | None = None,
+        auto_run: bool = False,
+    ):
         super().__init__(application=app, title="Ratarmount UI")
         self.set_default_size_from_font()
 
@@ -123,6 +128,8 @@ class RatarmountWindow(Gtk.ApplicationWindow):
         self.updating_ui = False
         self.dragged_row: SourceRow | None = None
         self.subprocess: subprocess.Popen | None = None
+        self.return_code: int | None = None
+        self.is_hidden_execution = False
 
         # Header Bar
         header = Gtk.HeaderBar()
@@ -330,10 +337,10 @@ class RatarmountWindow(Gtk.ApplicationWindow):
         hbox_exec_actions.set_halign(Gtk.Align.END)
         vbox_exec.append(hbox_exec_actions)
 
-        btn_abort = Gtk.Button(label="Abort")
-        btn_abort.add_css_class("destructive-action")
-        btn_abort.connect("clicked", self.on_abort)
-        hbox_exec_actions.append(btn_abort)
+        self.btn_abort = Gtk.Button(label="Abort")
+        self.btn_abort.add_css_class("destructive-action")
+        self.btn_abort.connect("clicked", self.on_abort)
+        hbox_exec_actions.append(self.btn_abort)
 
         btn_close = Gtk.Button(label="Close")
         btn_close.connect("clicked", self.on_close_clicked)
@@ -356,6 +363,13 @@ class RatarmountWindow(Gtk.ApplicationWindow):
         )
 
         self.update_ui_from_args(initial_args if initial_args is not None else [])
+
+        if auto_run:
+            self.is_hidden_execution = True
+            # Construct command from initial_args
+            cmd = ["ratarmount"] + (initial_args if initial_args else [])
+            self.start_execution(cmd)
+            GLib.timeout_add(1000, self.check_show_window)
 
     def _create_main_vbox(self) -> Gtk.Box:
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -730,51 +744,97 @@ class RatarmountWindow(Gtk.ApplicationWindow):
         if not cmd:
             return
 
+        self.start_execution(cmd)
+
+    def start_execution(self, cmd: list[str]) -> None:
         # Switch to execution view
         self.stack.set_visible_child_name("execution")
         self.log_view.get_buffer().set_text("")
+        self.btn_abort.set_visible(True)
 
         print(f"Executing: {cmd}")
         try:
-            self.subprocess = subprocess.Popen(
+            pid, stdin_fd, stdout_fd, stderr_fd = GLib.spawn_async(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,  # Line buffered
+                flags=GLib.SpawnFlags.SEARCH_PATH | GLib.SpawnFlags.DO_NOT_REAP_CHILD,
+                standard_output=True,
+                standard_error=True,
             )
+            self.child_pid = pid
 
-            if self.subprocess.stdout:
+            # We don't use stdin, close it
+            if stdin_fd is not None:
+                os.close(stdin_fd)
+
+            GLib.child_watch_add(GLib.PRIORITY_DEFAULT, pid, self.on_child_exit)
+
+            if stdout_fd is not None:
                 GLib.io_add_watch(
-                    self.subprocess.stdout,
-                    GLib.IO_IN | GLib.IO_HUP,
-                    self.on_subprocess_output,
+                    stdout_fd, GLib.PRIORITY_DEFAULT, GLib.IO_IN | GLib.IO_HUP, self.on_output, sys.stdout
+                )
+
+            if stderr_fd is not None:
+                GLib.io_add_watch(
+                    stderr_fd, GLib.PRIORITY_DEFAULT, GLib.IO_IN | GLib.IO_HUP, self.on_output, sys.stderr
                 )
 
         except Exception as e:
             self.log_view.get_buffer().set_text(f"Error starting command: {e}")
+            self.btn_abort.set_visible(False)
+            if self.is_hidden_execution:
+                self.present()
 
-    def on_subprocess_output(self, source, condition) -> bool:
+    def on_output(self, source, condition, stream) -> bool:
         if condition & GLib.IO_IN:
-            line = source.readline()
-            if line:
-                self._append_log(line)
-                return True
+            try:
+                chunk = os.read(source, 4096)
+                if chunk:
+                    text = chunk.decode("utf-8", errors="replace")
+                    self._append_log(text)
+                    stream.write(text)
+                    stream.flush()
+                    return True
+            except OSError:
+                pass
 
-        # If we get here, it means IO_HUP or readline returned empty (EOF)
-        # The process has likely exited or closed stdout.
-        # We should wait for the process to fully exit to get the return code,
-        # but for now, let's just close the app as requested.
-        # We use a small timeout to ensure we processed all output and let the process die.
-        GLib.timeout_add(100, self.check_exit_and_close)
+        # EOF or Error, close FD and remove source
+        try:
+            os.close(source)
+        except OSError:
+            pass
         return False
 
-    def check_exit_and_close(self) -> bool:
-        if self.subprocess:
-            if self.subprocess.poll() is not None:
-                self.close()
-                return False
-        return True  # Keep checking
+    def on_child_exit(self, pid: int, status: int) -> None:
+        self.child_pid = None
+        self.btn_abort.set_visible(False)
+
+        # Close the pid handle
+        GLib.spawn_close_pid(pid)
+
+        # Decode status
+        return_code = 0
+        if os.WIFEXITED(status):
+            return_code = os.WEXITSTATUS(status)
+        elif os.WIFSIGNALED(status):
+            return_code = -os.WTERMSIG(status)
+
+        self.return_code = return_code
+
+        if return_code == 0:
+            sys.exit(0)
+        else:
+            # Error occurred
+            if self.is_hidden_execution:
+                self.is_hidden_execution = False
+                self.present()
+            # Do NOT close, let user see the error
+
+    def check_show_window(self) -> bool:
+        if self.child_pid is not None:
+            # Still running after timeout, show window
+            self.is_hidden_execution = False
+            self.present()
+        return False
 
     def _append_log(self, text: str) -> None:
         buffer = self.log_view.get_buffer()
@@ -786,14 +846,17 @@ class RatarmountWindow(Gtk.ApplicationWindow):
             adj.set_value(adj.get_upper() - adj.get_page_size())
 
     def on_abort(self, btn: Gtk.Button) -> None:
-        if self.subprocess:
-            self.subprocess.send_signal(signal.SIGINT)
+        if self.child_pid:
+            try:
+                os.kill(self.child_pid, signal.SIGINT)
+            except OSError:
+                pass
 
     def on_close_clicked(self, btn: Gtk.Button) -> None:
-        self.close()
+        sys.exit(self.return_code if self.return_code is not None else 0)
 
     def on_cancel(self) -> None:
-        self.close()
+        self.on_close_clicked(None)
 
 
 class RatarmountApp(Gtk.Application):
@@ -816,12 +879,16 @@ class RatarmountApp(Gtk.Application):
         # The arguments are passed to the window.
         args = command_line.get_arguments()[1:]  # Skip the program name itself
 
+        force_auto_run = os.environ.get("RATARMOUNT_UI_FORCE") == "yes"
+
         win = self.props.active_window
         if not win:
-            win = RatarmountWindow(self, initial_args=args)
+            win = RatarmountWindow(self, initial_args=args, auto_run=force_auto_run)
         else:
             win.update_ui_from_args(args)
-        win.present()
+
+        if not force_auto_run:
+            win.present()
 
         return 0
 
@@ -876,27 +943,27 @@ if Nautilus is not None:
                 label="Mount",
                 tip="Mount selected archives with ratarmount",
             )
-            item_mount.connect("activate", self.on_mount, valid_files)
+            item_mount.connect("activate", self.on_mount, valid_files, {"RATARMOUNT_UI_FORCE": "yes"})
 
             item_mount_ui = Nautilus.MenuItem(
                 name="RatarmountMenuProvider::MountUI",
                 label="Mount Advanced",
                 tip="Open Ratarmount UI with selected archives",
             )
-            item_mount_ui.connect("activate", self.on_mount_ui, valid_files)
+            item_mount_ui.connect("activate", self.on_mount, valid_files)
 
             return [item_mount, item_mount_ui]
 
-        def on_mount(self, menu, files):
-            file_paths = [file.get_location().get_path() for file in files]
-            subprocess.Popen(["ratarmount"] + file_paths)
-
-        def on_mount_ui(self, menu, files):
+        def on_mount(
+            self, menu: Nautilus.Menu, files: list[Nautilus.FileInfo], extra_env: dict[str, str] | None = None
+        ) -> None:
             # Spawn this script with files as arguments
             script_path = os.path.abspath(__file__)
             file_paths = [file.get_location().get_path() for file in files]
             cmd = [sys.executable, script_path] + file_paths
-            subprocess.Popen(cmd)
+            env = os.environ.copy()
+            env.update(extra_env or {})
+            subprocess.Popen(cmd, env=env)
 
     class RatarmountInfoProvider(GObject.GObject, Nautilus.InfoProvider):
         def update_file_info(self, file: Nautilus.FileInfo) -> int:
