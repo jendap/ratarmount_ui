@@ -23,11 +23,11 @@ class SourceRow(Gtk.ListBoxRow):
     def __init__(
         self,
         path: str = "",
-        parent_window: "RatarmountWindow" | None = None,
+        parent_list: "SourceList" | None = None,
         remove_callback: Callable[["SourceRow"], None] | None = None,
     ):
         super().__init__()
-        self.parent_window = parent_window
+        self.parent_list = parent_list
         self.remove_callback = remove_callback
 
         self.hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -69,14 +69,14 @@ class SourceRow(Gtk.ListBoxRow):
         return Gdk.ContentProvider.new_for_value("RATARMOUNT_ROW")
 
     def on_drag_begin(self, source: Gtk.DragSource, drag: Gdk.Drag) -> None:
-        if self.parent_window:
-            self.parent_window.dragged_row = self
+        if self.parent_list:
+            self.parent_list.dragged_row = self
             paintable = Gtk.WidgetPaintable.new(self)
             source.set_icon(paintable, 0, 0)
 
     def on_drag_end(self, source: Gtk.DragSource, drag: Gdk.Drag, delete_data: bool) -> None:
-        if self.parent_window:
-            self.parent_window.dragged_row = None
+        if self.parent_list:
+            self.parent_list.dragged_row = None
 
     def on_changed(self, widget: Gtk.Widget) -> None:
         path = self.entry.get_text()
@@ -85,9 +85,9 @@ class SourceRow(Gtk.ListBoxRow):
         else:
             self.entry.remove_css_class("error")
 
-        if self.parent_window:
-            self.parent_window.on_source_changed(self)
-            self.parent_window.on_ui_change(widget)
+        if self.parent_list:
+            self.parent_list.on_source_changed(self)
+            self.parent_list.on_ui_change(widget)
 
     def on_browse(self, widget: Gtk.Widget) -> None:
         dialog = Gtk.FileChooserNative(
@@ -112,6 +112,107 @@ class SourceRow(Gtk.ListBoxRow):
         return self.entry.get_text()
 
 
+class SourceList(Gtk.Box):
+    def __init__(self, on_change_callback: Callable[[], None]):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        self.on_change_callback = on_change_callback
+        self.sources: list[SourceRow] = []
+        self.dragged_row: SourceRow | None = None
+
+        self.listbox = Gtk.ListBox()
+        self.listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.listbox.set_vexpand(True)
+
+        # Drop Target for Reordering
+        drop_target = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE)
+        drop_target.connect("drop", self.on_drop)
+        drop_target.connect("motion", self.on_drag_motion)
+        drop_target.connect("leave", self.on_drag_leave)
+        self.listbox.add_controller(drop_target)
+
+        # Scrolled window for listbox
+        scrolled_list = Gtk.ScrolledWindow()
+        scrolled_list.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled_list.set_child(self.listbox)
+        scrolled_list.set_min_content_height(200)
+        scrolled_list.set_vexpand(True)
+        self.append(scrolled_list)
+
+        self.ensure_empty_row()
+
+    def get_sources(self) -> list[str]:
+        return [row.get_path() for row in self.sources if row.get_path()]
+
+    def set_sources(self, paths: list[str]) -> None:
+        while self.sources:
+            self.listbox.remove(self.sources.pop())
+
+        for path in paths:
+            self.add_source_row(path)
+
+        self.ensure_empty_row()
+
+    def add_source_row(self, path: str) -> None:
+        row = SourceRow(path, parent_list=self, remove_callback=self.on_remove_source)
+        self.sources.append(row)
+        self.listbox.append(row)
+
+    def on_remove_source(self, row: SourceRow) -> None:
+        if row in self.sources:
+            self.sources.remove(row)
+            self.listbox.remove(row)
+            self.ensure_empty_row()
+            self.on_change_callback()
+
+    def ensure_empty_row(self) -> None:
+        if not self.sources or self.sources[-1].get_path() != "":
+            self.add_source_row("")
+
+    def on_source_changed(self, row: SourceRow) -> None:
+        if row == self.sources[-1] and row.get_path() != "":
+            self.add_source_row("")
+        self.on_change_callback()
+
+    def on_ui_change(self, widget: Gtk.Widget) -> None:
+        self.on_change_callback()
+
+    def on_drag_motion(self, target: Gtk.DropTarget, x: float, y: float) -> Gdk.DragAction:
+        row = self.listbox.get_row_at_y(int(y))
+        if row:
+            self.listbox.drag_highlight_row(row)
+        else:
+            self.listbox.drag_unhighlight_row()
+        return Gdk.DragAction.MOVE
+
+    def on_drag_leave(self, target: Gtk.DropTarget) -> None:
+        self.listbox.drag_unhighlight_row()
+
+    def on_drop(self, target: Gtk.DropTarget, value: any, x: float, y: float) -> bool:
+        self.listbox.drag_unhighlight_row()
+
+        if not self.dragged_row:
+            return False
+
+        target_row = self.listbox.get_row_at_y(int(y))
+        if not target_row:
+            target_row = self.sources[-1] if self.sources else None
+
+        if target_row and target_row != self.dragged_row:
+            source_idx = self.sources.index(self.dragged_row)
+            target_idx = self.sources.index(target_row)
+
+            self.sources.pop(source_idx)
+            self.sources.insert(target_idx, self.dragged_row)
+
+            self.listbox.remove(self.dragged_row)
+            self.listbox.insert(self.dragged_row, target_idx)
+
+            self.on_change_callback()
+            return True
+
+        return False
+
+
 class RatarmountWindow(Gtk.ApplicationWindow):
     def __init__(
         self,
@@ -122,11 +223,11 @@ class RatarmountWindow(Gtk.ApplicationWindow):
         super().__init__(application=app, title="Ratarmount UI")
         self.set_default_size_from_font()
 
-        self.sources: list[SourceRow] = []
+        self.set_default_size_from_font()
+
         self.extra_args: list[str] = []
         self.updating_preview = False
         self.updating_ui = False
-        self.dragged_row: SourceRow | None = None
         self.subprocess: subprocess.Popen | None = None
         self.return_code: int | None = None
         self.is_hidden_execution = False
@@ -168,24 +269,8 @@ class RatarmountWindow(Gtk.ApplicationWindow):
 
         hbox_header.append(Gtk.Label(label="Mount Sources:", xalign=0))
 
-        self.listbox = Gtk.ListBox()
-        self.listbox.set_selection_mode(Gtk.SelectionMode.NONE)
-        self.listbox.set_vexpand(True)
-
-        # Drop Target for Reordering
-        drop_target = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE)
-        drop_target.connect("drop", self.on_drop)
-        drop_target.connect("motion", self.on_drag_motion)
-        drop_target.connect("leave", self.on_drag_leave)
-        self.listbox.add_controller(drop_target)
-
-        # Scrolled window for listbox
-        scrolled_list = Gtk.ScrolledWindow()
-        scrolled_list.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled_list.set_child(self.listbox)
-        scrolled_list.set_min_content_height(200)
-        scrolled_list.set_vexpand(True)
-        vbox_config.append(scrolled_list)
+        self.source_list = SourceList(on_change_callback=lambda: self.on_ui_change(None))
+        vbox_config.append(self.source_list)
 
         # Mount Point
         hbox_mount = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10, margin_start=16, margin_end=16)
@@ -460,46 +545,6 @@ class RatarmountWindow(Gtk.ApplicationWindow):
 
         about_window.present()
 
-    def on_drag_motion(self, target: Gtk.DropTarget, x: float, y: float) -> Gdk.DragAction:
-        row = self.listbox.get_row_at_y(int(y))
-        if row:
-            self.listbox.drag_highlight_row(row)
-        else:
-            self.listbox.drag_unhighlight_row()
-        return Gdk.DragAction.MOVE
-
-    def on_drag_leave(self, target: Gtk.DropTarget) -> None:
-        self.listbox.drag_unhighlight_row()
-
-    def on_drop(self, target: Gtk.DropTarget, value: any, x: float, y: float) -> bool:
-        self.listbox.drag_unhighlight_row()
-
-        if not self.dragged_row:
-            return False
-
-        target_row = self.listbox.get_row_at_y(int(y))
-        if not target_row:
-            # Dropped below last item?
-            # We can just move to end if dropped in empty space
-            target_row = self.sources[-1] if self.sources else None
-
-        if target_row and target_row != self.dragged_row:
-            source_idx = self.sources.index(self.dragged_row)
-            target_idx = self.sources.index(target_row)
-
-            # Move in list
-            self.sources.pop(source_idx)
-            self.sources.insert(target_idx, self.dragged_row)
-
-            # Move in UI
-            self.listbox.remove(self.dragged_row)
-            self.listbox.insert(self.dragged_row, target_idx)
-
-            self.update_preview()
-            return True
-
-        return False
-
     def set_default_size_from_font(self) -> None:
         try:
             ctx = self.get_pango_context()
@@ -520,8 +565,7 @@ class RatarmountWindow(Gtk.ApplicationWindow):
         self.updating_ui = True
         try:
             # Reset UI
-            while self.sources:
-                self.listbox.remove(self.sources.pop())
+            self.source_list.set_sources([])
             self.check_recursive.set_active(False)
             self.lbl_depth.set_sensitive(False)
             self.spin_depth.set_value(0)
@@ -589,11 +633,7 @@ class RatarmountWindow(Gtk.ApplicationWindow):
             elif len(positional) == 1:
                 sources_data = positional
 
-            for src in sources_data:
-                self.add_source_row(src)
-
-            # Ensure there is always one empty row at the end
-            self.ensure_empty_row()
+            self.source_list.set_sources(sources_data)
 
             self.mount_entry.set_text(mount_point)
             self.on_recursive_toggled(self.check_recursive)  # Update sensitivity
@@ -619,31 +659,7 @@ class RatarmountWindow(Gtk.ApplicationWindow):
 
         self.update_ui_from_args(args, from_preview=True)
 
-    def ensure_empty_row(self) -> None:
-        if not self.sources or self.sources[-1].get_path() != "":
-            self.add_source_row("")
-
-    def on_source_changed(self, row: SourceRow) -> None:
-        # If the changed row is the last one and it is not empty, add a new empty row
-        if row == self.sources[-1] and row.get_path() != "":
-            self.add_source_row("")
-
-    def add_source_row(self, path: str) -> None:
-        row = SourceRow(path, parent_window=self, remove_callback=self.on_remove_source)
-        self.sources.append(row)
-        self.listbox.append(row)
-
-    def on_remove_source(self, row: SourceRow) -> None:
-        if row in self.sources:
-            self.sources.remove(row)
-            self.listbox.remove(row)
-
-            # If we removed the last row, or if the list is empty, ensure we have an empty row
-            self.ensure_empty_row()
-
-            self.update_preview()
-
-    def on_ui_change(self, widget: Gtk.Widget) -> None:
+    def on_ui_change(self, widget: Gtk.Widget | None) -> None:
         # Validate Mount Point
         mount_point = self.mount_entry.get_text()
         if mount_point:
@@ -715,13 +731,9 @@ class RatarmountWindow(Gtk.ApplicationWindow):
 
         cmd.extend(self.extra_args)
 
-        sources_args = []
-        for row in self.sources:
-            path = row.get_path()
-            if path:
-                sources_args.append(path)
+        cmd.extend(self.extra_args)
 
-        cmd.extend(sources_args)
+        cmd.extend(self.source_list.get_sources())
 
         mount_point = self.mount_entry.get_text()
         if mount_point:
