@@ -34,6 +34,7 @@ SUPPORTED_EXTENSIONS = (
     ".tgz",
     ".txz",
     ".tzst",
+    ".whl",
     ".xar",
     ".zip",
 )
@@ -63,7 +64,7 @@ class RatarmountMenuProvider(GObject.GObject, Nautilus.MenuProvider):
 
         item_mount_ui = Nautilus.MenuItem(
             name="RatarmountMenuProvider::MountUI",
-            label="Mount Advanced",
+            label="Mount...",
             tip="Open Ratarmount UI with selected archives",
         )
         item_mount_ui.connect("activate", self.on_mount, valid_files)

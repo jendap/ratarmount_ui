@@ -128,7 +128,7 @@ class SourceList(Gtk.Box):
         scrolled_list = Gtk.ScrolledWindow()
         scrolled_list.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scrolled_list.set_child(self.listbox)
-        scrolled_list.set_min_content_height(200)
+        scrolled_list.set_min_content_height(120)
         scrolled_list.set_vexpand(True)
         self.append(scrolled_list)
 
