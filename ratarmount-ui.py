@@ -531,7 +531,7 @@ class RatarmountWindow(Gtk.ApplicationWindow):
 
         vbox = self._create_main_vbox()
         about_window.set_child(vbox)
-        vbox.append(self._create_author("Ratarmount UI", "Jan Prach", "https://github.com/jendap/ratarmount-ui"))
+        vbox.append(self._create_author("Ratarmount UI", "Jan Prach", "https://github.com/jendap/ratarmount_ui"))
         vbox.append(self._create_author("Ratarmount", "Maximillian Knespel", "https://github.com/mxmlnkn/ratarmount"))
         vbox.append(self._create_cmd_output("Open Source Attributions:", ["ratarmount", "--oss-attributions-short"]))
 
@@ -864,7 +864,7 @@ class RatarmountWindow(Gtk.ApplicationWindow):
 class RatarmountApp(Gtk.Application):
     def __init__(self):
         super().__init__(
-            application_id="com.github.jendap.ratarmount-ui",
+            application_id="com.github.jendap.ratarmount_ui",
             flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE,
         )
 
@@ -897,4 +897,4 @@ class RatarmountApp(Gtk.Application):
 
 if __name__ == "__main__":
     app = RatarmountApp()
-    app.run(sys.argv)  # Pass all arguments to the application
+    app.run(sys.argv)
